@@ -3,6 +3,7 @@ import csv
 import datetime
 import logging
 import os
+import re
 import sys
 
 from enum import IntEnum, unique
@@ -202,23 +203,48 @@ def merge_md_filenames(md_dir_path, old_md_index_path):
     return filenames
 
 
+def get_md_url_mapping(md_url_index_path):
+    md_url_mapping = {}
+
+    if md_url_index_path in (None, ""):
+        return md_url_mapping
+
+    with open(md_url_index_path, newline="", encoding="utf-8") as md_url_index:
+        for row in md_url_index:
+            line = row.strip()
+
+            # markdown link ex: `[Page A.md](https://hackmd.io/aaa)`
+            # https://regexr.com/7el7e
+            pattern = r'\[(.+)\]\((https*:\/\/.+)\)'
+            result = re.search(pattern, line)
+            if result is not None:
+                groups = result.groups()
+                # logging.debug(f"md_url match groups= {groups}")
+                title, link = groups
+                md_url_mapping[title] = link
+
+    return md_url_mapping
+
+
 def generate_md_index(md_dir_path, md_url_index_path, old_md_index_path, md_index_path, tmp_md_index_path):
     md_filenames = merge_md_filenames(md_dir_path, old_md_index_path)
+    md_url_mapping = get_md_url_mapping(md_url_index_path)
 
     with MdIndexReader(old_md_index_path) as old_md_index, \
             MdIndexWriter(md_index_path) as md_index, \
             MdIndexWriter(tmp_md_index_path) as tmp_md_index:
 
-        # TODO: MdUrl
-
         for md_filename in md_filenames:
             md_path = f"{md_dir_path}/{md_filename}"
+            md_url = md_url_mapping.get(md_filename)
+
             if os.path.exists(md_path):
                 modified_date = datetime.datetime.fromtimestamp(os.path.getmtime(md_path)).astimezone()
 
                 if old_md_index.has_filename(md_filename):
                     record = old_md_index.get_record_by_filename(md_filename)
                     # logging.debug(f"old record= {record}")
+                    record.md_url = md_url if md_url is not None else record.md_url
 
                     if modified_date > record.modified_date:
                         record.is_synced = MdIndexIsSynced.N
@@ -231,14 +257,16 @@ def generate_md_index(md_dir_path, md_url_index_path, old_md_index_path, md_inde
                         md_index.create(record)
 
                 else:
-                    record = MdIndexRecord(md_filename, "", MdIndexIsSynced.N_FIRST, modified_date)
+                    record = MdIndexRecord(md_filename, md_url, MdIndexIsSynced.N_FIRST, modified_date)
 
                     md_index.create(record)
                     tmp_md_index.create(record)
 
             else:
-                record = old_md_index.get_raw_record_by_filename(md_filename)
-                md_index.create_by_raw_record(record)
+                record = old_md_index.get_record_by_filename(md_filename)
+                record.md_url = md_url if md_url is not None else record.md_url
+
+                md_index.create(record)
 
 
 def mock_old_index():
