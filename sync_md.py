@@ -7,21 +7,29 @@ import random
 import re
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from enum import IntEnum, unique
+from http.client import HTTPResponse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 LOG_DIR = f"{os.getcwd()}/log"
 if not os.path.isdir(LOG_DIR):
     os.mkdir(LOG_DIR)
 
 # LOGGING_FORMAT = "%(asctime)s %(levelname)s: %(message)s"
-LOGGING_FORMAT = "%(message)s"
+# LOGGING_FORMAT = "%(message)s"
+LOGGING_FORMAT = "%(asctime)s [%(processName)s] [%(threadName)s] [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.DEBUG,
                     handlers=[
                         logging.StreamHandler(sys.stdout),
                         logging.FileHandler(f"{LOG_DIR}/sync_md.log", "w", "utf-8")
                     ],
                     format=LOGGING_FORMAT)
+
+IMG_BUF_SIZE = 64 * 1024  # unit: byte
+THREAD_POOL_MAX_WORKERS = 5
 
 MD_INDEX_FIELD_NAMES = ["FileName", "MdUrl", "ModifiedDate", "IsSynced"]
 IMG_INDEX_FIELD_NAMES = ["MdFileName", "IsDownloaded", "ImageUrl", "ImageName"]
@@ -288,6 +296,15 @@ class ImgIndexReader:
 
         return records
 
+    def list_md_filename(self):
+        md_filenames = list(self._record_index_by_md_filename.keys())
+        return md_filenames
+
+    def list_record(self):
+        for row in self._get_reader():
+            record = img_index_raw_record_to_img_index_record(row)
+            yield record
+
 
 def merge_md_filenames(md_dir_path, old_md_index_path):
     filenames = set((fn for fn in os.listdir(md_dir_path) if os.path.isfile(f"{md_dir_path}/{fn}")))
@@ -403,8 +420,8 @@ def copy_md_files(md_input_dir_path, md_output_dir_path):
                   f"from {md_input_dir_path}\n"
                   f"to {md_output_dir_path}\n"
                   f"=======================================================\n")
-
-    shutil.rmtree(md_output_dir_path)
+    if os.path.isdir(md_output_dir_path):
+        shutil.rmtree(md_output_dir_path)
     shutil.copytree(md_input_dir_path, md_output_dir_path, dirs_exist_ok=True)
 
 
@@ -458,6 +475,16 @@ def generate_img_name(img_url):
     img_name = f"{num}-{norm_name}"
 
     return img_name
+
+
+def generate_img_dir_name(md_filename):
+    (md_filename_without_ext, sep, ext) = md_filename.rpartition(".")
+    if sep == "." and ext == "md":
+        img_dir_name = md_filename_without_ext
+    else:
+        img_dir_name = md_filename
+
+    return img_dir_name
 
 
 def generate_img_index(md_dir_path, md_index_path,
@@ -522,15 +549,107 @@ def generate_img_index(md_dir_path, md_index_path,
                 for img_url in deleted_img_urls:
                     record = old_record_index[img_url]
 
-                    (md_filename_without_ext, sep, ext) = record.md_filename.rpartition(".")
-                    if sep == "." and ext == "md":
-                        img_dir_name = md_filename_without_ext
-                    else:
-                        img_dir_name = record.md_filename
-
+                    img_dir_name = generate_img_dir_name(record.md_filename)
                     img_path = f"{img_dir_name}/{record.img_name}"
 
                     delete_img_list.write(f"{img_path}\n")
+
+
+def download_image_job(args):
+    md_filename, md_output_dir_path, tmp_img_index_path = args
+    logging.debug(f"download_image_job start `{md_filename}`")
+
+    download_ok_urls = []
+
+    img_dir_name = generate_img_dir_name(md_filename)
+    img_output_dir_path = f"{md_output_dir_path}/{img_dir_name}"
+    if not os.path.isdir(img_output_dir_path):
+        os.mkdir(img_output_dir_path)
+
+    with ImgIndexReader(tmp_img_index_path) as tmp_img_index:
+        records = tmp_img_index.get_records_by_md_filename(md_filename)
+
+    for record in records:
+        img_path = f"{img_output_dir_path}/{record.img_name}"
+
+        headers = {"User-Agent": ""}
+        req = Request(record.img_url, None, headers)
+
+        try:
+            response: HTTPResponse = urlopen(req)
+            with response, \
+                    open(img_path, "wb") as img:
+                while True:
+                    buf = response.read(IMG_BUF_SIZE)
+                    if len(buf) == 0:
+                        break
+                    img.write(buf)
+
+        except HTTPError as e:
+            logging.info(f"HTTP Error: {e.code}  `{record.img_url}`")
+        except URLError as e:
+            logging.info(f"We failed to reach a server: `{record.img_url}`\n    Reason: {e.reason}")
+        except Exception as e:
+            logging.error(f"\nException download image: `{record.img_url}`\n", exc_info=e)
+        else:
+            download_ok_urls.append(record.img_url)
+
+    logging.debug(f"download_image_job end `{md_filename}`")
+
+    total_url_amount = len(records)
+    return md_filename, total_url_amount, download_ok_urls
+
+
+def download_images(md_output_dir_path, tmp_img_index_path):
+    with ImgIndexReader(tmp_img_index_path) as tmp_img_index:
+        md_filenames = tmp_img_index.list_md_filename()
+
+    logging.info(f"\n=== All download_images Jobs {len(md_filenames)} =============================\n")
+
+    with ThreadPoolExecutor(THREAD_POOL_MAX_WORKERS) as executor:
+        futures = {}
+        for md_filename in md_filenames:
+            future = executor.submit(download_image_job,
+                                     (md_filename, md_output_dir_path, tmp_img_index_path))
+            futures[future] = md_filename
+
+    download_ok = {}
+    for future in as_completed(futures):
+        md_filename = futures[future]
+        try:
+            result = future.result()
+        except Exception as e:
+            logging.error(f"\nException download_image_job `{md_filename}`\n", exc_info=e)
+        else:
+            md_filename, total_url_amount, download_ok_urls = result
+
+            download_fail_amount = total_url_amount - len(download_ok_urls)
+            if download_fail_amount > 0:
+                logging.info(
+                    f"FailedRate download_image_job {download_fail_amount}/{total_url_amount} `{md_filename}`\n"
+                    f"  ok_urls= {download_ok_urls}")
+            else:
+                logging.debug(f"Result download_image_job `{md_filename}`\n  {total_url_amount}, {download_ok_urls}")
+
+            download_ok[md_filename] = set(download_ok_urls)
+
+    return download_ok
+
+
+def mark_is_downloaded_in_img_index(img_index_path, download_ok: dict):
+    new_img_index_path = f"{img_index_path}.new"
+    with ImgIndexReader(img_index_path) as img_index, \
+            ImgIndexWriter(new_img_index_path) as new_img_index:
+        records = img_index.list_record()
+        EMPTY_SET = set()
+        for record in records:
+            if record.img_url in download_ok.get(record.md_filename, EMPTY_SET):
+                record.is_downloaded = True
+
+            new_img_index.create(record)
+
+    os.remove(img_index_path)
+    os.rename(new_img_index_path, img_index_path)
 
 
 def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path):
@@ -557,8 +676,9 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
                   f"==========================================================\n")
 
     output_dir = f"{os.getcwd()}/output"
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
+    if os.path.isdir(output_dir):
+        shutil.rmtree(output_dir)
+    os.mkdir(output_dir)
 
     md_index_path = f"{output_dir}/index-markdown.csv"
     tmp_md_index_path = f"{output_dir}/index-markdown-tmp.csv"
@@ -572,6 +692,10 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
     delete_img_list_path = f"{output_dir}/deleteImgList.txt"
     generate_img_index(md_output_dir_path, md_index_path,
                        old_img_index_path, img_index_path, tmp_img_index_path, delete_img_list_path)
+
+    download_ok = download_images(md_output_dir_path, tmp_img_index_path)
+    mark_is_downloaded_in_img_index(tmp_img_index_path, download_ok)
+    mark_is_downloaded_in_img_index(img_index_path, download_ok)
 
 
 def main():
