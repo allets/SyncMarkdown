@@ -431,18 +431,17 @@ def parse_img_urls_in_md(md_path, acceptance_predicate):
     if not os.path.exists(md_path) or os.path.isdir(md_path):
         return img_urls
 
-    with open(md_path, newline="", encoding="utf-8") as md:
-        for row in md:
-            line = row.strip()
+    # markdown img ex: `![Alt text](https://i.imgur.com/bbb.png "Title Text")`
+    # https://regexr.com/7f2h2
+    pattern = r"\!\[(\"([^\n\r\"]*)\"|[^\n\r\]]*)\]\((https*:\/\/([^\)\"]+))(?:[ ]+\"[^\n\r\"]*\")?\)"
 
-            # markdown img ex: `![img alt](https://i.imgur.com/bbb.png)`
-            # https://regexr.com/7el72
-            pattern = r"\!\[(.*)\]\((https*:\/\/([^\)]+))\)"
-            result = re.search(pattern, line)
-            if result is not None:
+    with open(md_path, newline="", encoding="utf-8") as md:
+        for line in md:
+            results = re.finditer(pattern, line)
+            for result in results:
                 groups = result.groups()
                 # logging.debug(f"img_url match groups= {groups}")
-                alt, link, link_without_protocol = groups
+                alt, alt_without_quotes, link, link_without_protocol = groups
                 if acceptance_predicate is None \
                         or acceptance_predicate(link):
                     img_urls.add(link)
