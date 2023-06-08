@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from enum import IntEnum, unique
 from http.client import HTTPResponse
+from re import Match
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -651,6 +652,70 @@ def mark_is_downloaded_in_img_index(img_index_path, download_ok: dict):
     os.rename(new_img_index_path, img_index_path)
 
 
+def replace_img_urls_in_md(md_path, img_output_dir_path, images):
+    if not os.path.exists(md_path) or os.path.isdir(md_path):
+        return
+
+    # markdown img ex: `![Alt text](https://i.imgur.com/bbb.png "Title Text")`
+    # https://regexr.com/7f2h2
+    pattern = r"\!\[(\"([^\n\r\"]*)\"|[^\n\r\]]*)\]\((https*:\/\/([^\)\"]+))(?:[ ]+\"[^\n\r\"]*\")?\)"
+
+    def replace_img_url(match: Match):
+        ret = match.group()
+
+        groups = match.groups()
+        alt, alt_without_quotes, link, link_without_protocol = groups
+
+        record = images.get(link, None)
+        if record is not None and record.is_downloaded:
+            img_path = f"{img_output_dir_path}/{record.img_name}"
+            ret = ret.replace(link, img_path)
+
+        return ret
+
+    new_md_path = f"{md_path}.new"
+    with open(md_path, newline="", encoding="utf-8") as md, \
+            open(new_md_path, mode="w", newline="", encoding="utf-8") as new_md:
+        for line in md:
+            modified_line = re.sub(pattern, replace_img_url, line)
+            new_md.write(modified_line)
+
+    os.remove(md_path)
+    os.rename(new_md_path, md_path)
+
+
+def replace_img_url_with_downloaded_img_in_md_job(args):
+    md_filename, md_output_dir_path, img_index_path = args
+    logging.debug(f"replace_img_url_with_downloaded_img_in_md_job start `{md_filename}`")
+
+    with ImgIndexReader(img_index_path) as img_index:
+        records = img_index.get_records_by_md_filename(md_filename)
+
+    if len(records) > 0:
+        md_path = f"{md_output_dir_path}/{md_filename}"
+        img_dir_name = generate_img_dir_name(md_filename)
+        img_output_dir_path = f"./{img_dir_name}"
+
+        images = {}
+        for record in records:
+            images[record.img_url] = record
+
+        replace_img_urls_in_md(md_path, img_output_dir_path, images)
+
+    logging.debug(f"replace_img_url_with_downloaded_img_in_md_job end `{md_filename}`")
+
+
+def replace_img_url_with_downloaded_img_in_md(md_output_dir_path, img_index_path):
+    md_filenames = set((fn for fn in os.listdir(md_output_dir_path) if os.path.isfile(f"{md_output_dir_path}/{fn}")))
+
+    logging.info(f"\n=== All replace_img_url_with_downloaded_img_in_md Jobs {len(md_filenames)} ===================\n")
+
+    with ThreadPoolExecutor(THREAD_POOL_MAX_WORKERS) as executor:
+        for md_filename in md_filenames:
+            executor.submit(replace_img_url_with_downloaded_img_in_md_job,
+                            (md_filename, md_output_dir_path, img_index_path))
+
+
 def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path):
     logging.debug(f"\n=== console params ====================================\n"
                   f"md_dir= {md_dir_path}\n"
@@ -695,6 +760,8 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
     download_ok = download_images(md_output_dir_path, tmp_img_index_path)
     mark_is_downloaded_in_img_index(tmp_img_index_path, download_ok)
     mark_is_downloaded_in_img_index(img_index_path, download_ok)
+
+    replace_img_url_with_downloaded_img_in_md(md_output_dir_path, img_index_path)
 
 
 def main():
