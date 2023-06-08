@@ -716,6 +716,28 @@ def replace_img_url_with_downloaded_img_in_md(md_output_dir_path, img_index_path
                             (md_filename, md_output_dir_path, img_index_path))
 
 
+def mark_is_synced_in_md_index(md_index_path, img_index_path):
+    new_md_index_path = f"{md_index_path}.new"
+    with MdIndexReader(md_index_path) as md_index, \
+            MdIndexWriter(new_md_index_path) as new_md_index, \
+            ImgIndexReader(img_index_path) as img_index:
+        records = md_index.list_record()
+        for record in records:
+            img_records = img_index.get_records_by_md_filename(record.filename)
+
+            is_all_downloaded = True
+            for img_record in img_records:
+                if not img_record.is_downloaded:
+                    is_all_downloaded = False
+                    break
+            record.is_synced = MdIndexIsSynced.Y if is_all_downloaded else record.is_synced
+
+            new_md_index.create(record)
+
+    os.remove(md_index_path)
+    os.rename(new_md_index_path, md_index_path)
+
+
 def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path):
     logging.debug(f"\n=== console params ====================================\n"
                   f"md_dir= {md_dir_path}\n"
@@ -762,6 +784,8 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
     mark_is_downloaded_in_img_index(img_index_path, download_ok)
 
     replace_img_url_with_downloaded_img_in_md(md_output_dir_path, img_index_path)
+    mark_is_synced_in_md_index(tmp_md_index_path, img_index_path)
+    mark_is_synced_in_md_index(md_index_path, img_index_path)
 
 
 def main():
