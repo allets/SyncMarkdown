@@ -738,6 +738,64 @@ def mark_is_synced_in_md_index(md_index_path, img_index_path):
     os.rename(new_md_index_path, md_index_path)
 
 
+def make_a_summary(summary_path, is_update_mode, md_output_dir_path, tmp_img_index_path, md_index_path,
+                   delete_img_list_path):
+    md_filenames = (fn for fn in os.listdir(md_output_dir_path) if os.path.isfile(f"{md_output_dir_path}/{fn}"))
+
+    with open(summary_path, mode="w", newline="", encoding="utf-8") as summary, \
+            ImgIndexReader(tmp_img_index_path) as tmp_img_index, \
+            MdIndexReader(md_index_path) as md_index:
+        img_amount = sum(1 for _ in tmp_img_index.list_record())
+
+        md_amount = 0
+        incompletely_synced_md_and_img = {}
+        failed_img_amount = 0
+        incompletely_synced_md_amount = 0
+        for md_filename in md_filenames:
+            md_amount += 1
+            md_record = md_index.get_record_by_filename(md_filename)
+
+            if md_record.is_synced != MdIndexIsSynced.Y:
+                incompletely_synced_md_amount += 1
+                incompletely_synced_md_and_img[md_filename] = failed_images = []
+                img_records = tmp_img_index.get_records_by_md_filename(md_filename)
+
+                for img_record in img_records:
+                    if not img_record.is_downloaded:
+                        failed_img_amount += 1
+                        failed_images.append(img_record.img_url)
+
+        summary.write(
+            f"# Summary\n"
+            f"sync markdown in {'update' if is_update_mode else 'create'} mode\n"
+            f"total {md_amount} markdown files and {img_amount} images this time\n"
+            f"see `index-markdown-tmp.csv` and `index-image-tmp.csv` for more detail about changes this time\n"
+            f"see `index-markdown.csv` and `index-image.csv` for more detail about whole history\n"
+            f"If it's in update mode, you need to manually delete unused images listed in `deleteImgList.txt`.\n"
+            f"\n")
+
+        summary.write(
+            f"## Incomplete Sync\n"
+            f"download failed image: {failed_img_amount}\n"
+            f"incompletely-synced markdown file: {incompletely_synced_md_amount}\n"
+            f"see the following:\n")
+
+        for fn in sorted(incompletely_synced_md_and_img.keys()):
+            img_urls = incompletely_synced_md_and_img.get(fn)
+            summary.write(f"{fn}\n")
+            for img_url in img_urls:
+                summary.write(f"    {img_url}\n")
+
+        if is_update_mode:
+            summary.write(f"\n")
+            summary.write("## Delete Manually by Yourself\n")
+            summary.write(f"`deleteImgList.txt` lists these unused images:\n")
+            with open(delete_img_list_path, newline="", encoding="utf-8") as delete_img_list:
+                summary.write(delete_img_list.read())
+
+        summary.write(f"\n\n\n")
+
+
 def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path):
     logging.debug(f"\n=== console params ====================================\n"
                   f"md_dir= {md_dir_path}\n"
@@ -746,6 +804,7 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
                   f"old_img_index= {old_img_index_path}\n"
                   f"=======================================================\n")
 
+    is_update_mode = False
     if old_md_index_path is None or old_img_index_path is None:
         # in create mode
         logging.debug("sync_md_in_create_mode")
@@ -753,6 +812,7 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
     else:
         # in update mode
         logging.debug("sync_md_in_update_mode")
+        is_update_mode = True
 
     logging.debug(f"\n=== sync_md params ======================================\n"
                   f"md_dir= {md_dir_path}\n"
@@ -786,6 +846,10 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
     replace_img_url_with_downloaded_img_in_md(md_output_dir_path, img_index_path)
     mark_is_synced_in_md_index(tmp_md_index_path, img_index_path)
     mark_is_synced_in_md_index(md_index_path, img_index_path)
+
+    summary_path = f"{output_dir}/summary.md"
+    make_a_summary(summary_path, is_update_mode, md_output_dir_path, tmp_img_index_path, md_index_path,
+                   delete_img_list_path)
 
 
 def main():
