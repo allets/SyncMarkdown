@@ -797,13 +797,6 @@ def make_a_summary(summary_path, is_update_mode, md_output_dir_path, tmp_img_ind
 
 
 def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path):
-    logging.debug(f"\n=== console params ====================================\n"
-                  f"md_dir= {md_dir_path}\n"
-                  f"md_url_index= {md_url_index_path}\n"
-                  f"old_md_index= {old_md_index_path}\n"
-                  f"old_img_index= {old_img_index_path}\n"
-                  f"=======================================================\n")
-
     is_update_mode = False
     if old_md_index_path is None or old_img_index_path is None:
         # in create mode
@@ -865,7 +858,24 @@ def main():
                          " for update mode")
 
     args = vars(ap.parse_args())
-    sync_md(args["md_dir"], args["md_url_index"], args["old_index"][0], args["old_index"][1])
+    md_dir_path = args["md_dir"]
+    md_url_index_path = args["md_url_index"]
+    old_md_index_path = args["old_index"][0]
+    old_img_index_path = args["old_index"][1]
+
+    logging.debug(f"\n=== console params ====================================\n"
+                  f"md_dir= {md_dir_path}\n"
+                  f"md_url_index= {md_url_index_path}\n"
+                  f"old_md_index= {old_md_index_path}\n"
+                  f"old_img_index= {old_img_index_path}\n"
+                  f"=======================================================\n")
+
+    md_dir_path = os.path.expanduser(md_dir_path)
+    md_url_index_path = os.path.expanduser(md_url_index_path) if md_url_index_path else md_url_index_path
+    old_md_index_path = os.path.expanduser(old_md_index_path) if old_md_index_path else old_md_index_path
+    old_img_index_path = os.path.expanduser(old_img_index_path) if old_img_index_path else old_img_index_path
+
+    sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path)
 
 
 if __name__ == '__main__':
