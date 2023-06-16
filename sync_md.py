@@ -789,6 +789,8 @@ def make_a_summary(summary_path, is_update_mode, md_output_dir_path, tmp_img_ind
         if is_update_mode:
             summary.write(f"\n")
             summary.write("## Delete Manually by Yourself\n")
+            summary.write("You can probably execute the following command to delete those images.\n")
+            summary.write("\n    xargs -a deleteImgList.txt -I{} -t rm <your_md_dir>/{}\n\n\n")
             summary.write(f"`deleteImgList.txt` lists these unused images:\n")
             with open(delete_img_list_path, newline="", encoding="utf-8") as delete_img_list:
                 summary.write(delete_img_list.read())
@@ -846,16 +848,26 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Sync HackMD markdown, output is in dir `output`")
-    ap.add_argument("-d", "--md-dir", required=True, help="input absolute path of markdown directory")
+    ap = argparse.ArgumentParser(
+        description="Sync Markdown - output is in directory `output`\n"
+                    "-----------------------------------------------\n"
+                    "  * download Imgur images in markdown and replace those URLs with local paths\n",
+        formatter_class=argparse.RawTextHelpFormatter, )
+    ap.add_argument("-d", "--md-dir", required=True, help="input path of markdown directory")
     ap.add_argument("-l", "--md-url-index", required=False, metavar="index-mdurl.md",
-                    help="input absolute path of `index-mdurl.md`")
+                    help="input path of `index-mdurl.md`\n"
+                         " \n"
+                         "`index-mdurl.md` is a markdown file mapping input markdown to URL such as HackMD.\n"
+                         "Its content should contain `-   [markdown_file_name_with_ext](HackMD_url)`.\n ")
     ap.add_argument("-s", "--old-index", required=False, nargs=2,
                     metavar=('index-markdown.csv', 'index-image.csv'),
                     default=[None, None],
-                    help="input absolute path of `index-markdown.csv`"
-                         " and absolute path of `index-image.csv`"
-                         " for update mode")
+                    help="input path of `index-markdown.csv`"
+                         " and path of `index-image.csv`"
+                         " for update mode\n"
+                         " \n"
+                         "`index-markdown.csv` contains sync statuses of past markdown files.\n"
+                         "`index-image.csv` contains download statuses of images in past markdown files.\n ")
 
     args = vars(ap.parse_args())
     md_dir_path = args["md_dir"]
