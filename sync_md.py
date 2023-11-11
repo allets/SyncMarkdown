@@ -8,14 +8,16 @@ import re
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from enum import IntEnum, unique
 from http.client import HTTPResponse
 from re import Match
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-LOG_DIR = f"{os.getcwd()}/log"
+from data_base_class import DataPrintable
+from url_filter import ImageUrlFilter
+
+LOG_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/log"
 if not os.path.isdir(LOG_DIR):
     os.mkdir(LOG_DIR)
 
@@ -25,7 +27,8 @@ LOGGING_FORMAT = "%(asctime)s [%(processName)s] [%(threadName)s] [%(levelname)s]
 logging.basicConfig(level=logging.DEBUG,
                     handlers=[
                         logging.StreamHandler(sys.stdout),
-                        logging.FileHandler(f"{LOG_DIR}/sync_md.log", "w", "utf-8")
+                        logging.FileHandler(f"{LOG_DIR}/{os.path.splitext(os.path.basename(__file__))[0]}.log",
+                                            "w", "utf-8")
                     ],
                     format=LOGGING_FORMAT)
 
@@ -35,13 +38,6 @@ THREAD_POOL_MAX_WORKERS = 5
 MD_INDEX_FIELD_NAMES = ["FileName", "MdUrl", "ModifiedDate", "IsSynced"]
 IMG_INDEX_FIELD_NAMES = ["MdFileName", "IsDownloaded", "ImageUrl", "ImageName"]
 FIELD_MODIFIED_DATE_FORMAT = "%Y/%m/%d %H:%M:%S.%f %z"
-
-
-class DataPrintable:
-    def __str__(self):
-        return f"<{self.__class__.__name__}\n" \
-               f"    {str(self.__dict__)}\n" \
-               f">"
 
 
 @unique
@@ -426,7 +422,7 @@ def copy_md_files(md_input_dir_path, md_output_dir_path):
     shutil.copytree(md_input_dir_path, md_output_dir_path, dirs_exist_ok=True)
 
 
-def parse_img_urls_in_md(md_path, acceptance_predicate):
+def parse_img_urls_in_md(md_path, img_url_filter: ImageUrlFilter):
     img_urls = set()
 
     if not os.path.exists(md_path) or os.path.isdir(md_path):
@@ -443,25 +439,12 @@ def parse_img_urls_in_md(md_path, acceptance_predicate):
                 groups = result.groups()
                 # logging.debug(f"img_url match groups= {groups}")
                 alt, alt_without_quotes, link, link_without_protocol = groups
-                if acceptance_predicate is None \
-                        or acceptance_predicate(link):
+                if img_url_filter.is_ok(link):
                     img_urls.add(link)
                 else:
                     logging.info(f"excluding img_url\n  {link}")
 
     return img_urls
-
-
-def is_acceptable_img_url(img_url):
-    acceptance = (
-        "https://i.imgur.com/",
-        "https://i.stack.imgur.com/",
-    )
-
-    if img_url.startswith(acceptance, 0, len(img_url) - 1):
-        return True
-    else:
-        return False
 
 
 def generate_img_name(img_url):
@@ -488,7 +471,11 @@ def generate_img_dir_name(md_filename):
 
 
 def generate_img_index(md_dir_path, md_index_path,
-                       old_img_index_path, img_index_path, tmp_img_index_path, delete_img_list_path):
+                       old_img_index_path, img_index_path, tmp_img_index_path, delete_img_list_path,
+                       img_url_filter_path):
+    with open(img_url_filter_path, newline="", encoding="utf-8") as img_url_filter_f:
+        img_url_filter = ImageUrlFilter(img_url_filter_f.readlines())
+
     with MdIndexReader(md_index_path) as md_index, \
             ImgIndexReader(old_img_index_path) as old_img_index, \
             ImgIndexWriter(img_index_path) as img_index, \
@@ -504,7 +491,7 @@ def generate_img_index(md_dir_path, md_index_path,
                 img_index.create_by_raw_records(old_records)
 
             elif md_record.is_synced == MdIndexIsSynced.N_FIRST:
-                img_urls = parse_img_urls_in_md(md_path, is_acceptable_img_url)
+                img_urls = parse_img_urls_in_md(md_path, img_url_filter)
                 # if img_urls:
                 #     logging.debug(f"image urls in `{md_record.filename}`\n  {img_urls}")
 
@@ -516,7 +503,7 @@ def generate_img_index(md_dir_path, md_index_path,
                     tmp_img_index.create(record)
 
             elif md_record.is_synced == MdIndexIsSynced.N:
-                img_urls = parse_img_urls_in_md(md_path, is_acceptable_img_url)
+                img_urls = parse_img_urls_in_md(md_path, img_url_filter)
                 # if img_urls:
                 #     logging.debug(f"image urls in `{md_record.filename}`\n  {img_urls}")
 
@@ -798,7 +785,7 @@ def make_a_summary(summary_path, is_update_mode, md_output_dir_path, tmp_img_ind
         summary.write(f"\n\n\n")
 
 
-def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path):
+def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path, img_url_filter_path):
     is_update_mode = False
     if old_md_index_path is None or old_img_index_path is None:
         # in create mode
@@ -814,6 +801,7 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
                   f"md_url_index= {md_url_index_path}\n"
                   f"old_md_index= {old_md_index_path}\n"
                   f"old_img_index= {old_img_index_path}\n"
+                  f"img_url_filter= {img_url_filter_path}\n"
                   f"==========================================================\n")
 
     output_dir = f"{os.getcwd()}/output"
@@ -832,7 +820,8 @@ def sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_pat
     tmp_img_index_path = f"{output_dir}/index-image-tmp.csv"
     delete_img_list_path = f"{output_dir}/deleteImgList.txt"
     generate_img_index(md_output_dir_path, md_index_path,
-                       old_img_index_path, img_index_path, tmp_img_index_path, delete_img_list_path)
+                       old_img_index_path, img_index_path, tmp_img_index_path, delete_img_list_path,
+                       img_url_filter_path)
 
     download_ok = download_images(md_output_dir_path, tmp_img_index_path)
     mark_is_downloaded_in_img_index(tmp_img_index_path, download_ok)
@@ -868,26 +857,34 @@ def main():
                          " \n"
                          "`index-markdown.csv` contains sync statuses of past markdown files.\n"
                          "`index-image.csv` contains download statuses of images in past markdown files.\n ")
+    ap.add_argument("-i", "--img-url-filter", required=False, metavar="imageUrlFilter.txt",
+                    default="./imageUrlFilter.txt",
+                    help="input path of `imageUrlFilter.txt`\n"
+                         "\n"
+                         "User defines rules to limit which images can be downloaded.\n")
 
     args = vars(ap.parse_args())
     md_dir_path = args["md_dir"]
     md_url_index_path = args["md_url_index"]
     old_md_index_path = args["old_index"][0]
     old_img_index_path = args["old_index"][1]
+    img_url_filter_path = args["img_url_filter"]
 
     logging.debug(f"\n=== console params ====================================\n"
                   f"md_dir= {md_dir_path}\n"
                   f"md_url_index= {md_url_index_path}\n"
                   f"old_md_index= {old_md_index_path}\n"
                   f"old_img_index= {old_img_index_path}\n"
+                  f"img_url_filter= {img_url_filter_path}\n"
                   f"=======================================================\n")
 
     md_dir_path = os.path.expanduser(md_dir_path)
     md_url_index_path = os.path.expanduser(md_url_index_path) if md_url_index_path else md_url_index_path
     old_md_index_path = os.path.expanduser(old_md_index_path) if old_md_index_path else old_md_index_path
     old_img_index_path = os.path.expanduser(old_img_index_path) if old_img_index_path else old_img_index_path
+    img_url_filter_path = os.path.expanduser(img_url_filter_path) if img_url_filter_path else img_url_filter_path
 
-    sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path)
+    sync_md(md_dir_path, md_url_index_path, old_md_index_path, old_img_index_path, img_url_filter_path)
 
 
 if __name__ == '__main__':

@@ -11,7 +11,7 @@ User scenarios:
 ## Usage
 
 ```
-usage: sync_md.py [-h] -d MD_DIR [-l index-mdurl.md] [-s index-markdown.csv index-image.csv]
+usage: sync_md.py [-h] -d MD_DIR [-l index-mdurl.md] [-s index-markdown.csv index-image.csv] [-i imageUrlFilter.txt]
 
 Sync Markdown - output is in directory `output`
 -----------------------------------------------
@@ -32,6 +32,11 @@ optional arguments:
 
                         `index-markdown.csv` contains sync statuses of past markdown files.
                         `index-image.csv` contains download statuses of images in past markdown files.
+
+  -i imageUrlFilter.txt, --img-url-filter imageUrlFilter.txt
+                        input path of `imageUrlFilter.txt`
+
+                        User defines rules to limit which images can be downloaded.
 ```
 
 
@@ -59,6 +64,9 @@ Input:
 		-   `index-markdown.csv` contains sync statuses of **past** markdown files.
 	-   path of `index-image.csv`
 		-   `index-image.csv` contains download statuses of images in **past** markdown files.
+-   path of `imageUrlFilter.txt`
+    -   User defines rules to limit which images can be downloaded.
+    -   Please see [default rules](./imageUrlFilter.txt).
 
 
 Output:
@@ -101,6 +109,9 @@ the root directory of the App:
 ```
 
 
+
+#### Summary of Output
+
 `summary.md` content:
 ```markdown
 # Summary
@@ -132,6 +143,9 @@ You can probably execute the following command to delete those images.
 ```
 
 
+
+#### Markdown Index
+
 `index-markdown.csv` csv Header and example record:
 ```
 "FileName", "MdUrl", "ModifiedDate", "IsSynced"
@@ -146,6 +160,9 @@ You can probably execute the following command to delete those images.
 	-   1: the file has been synchronized
 
 
+
+#### Image Index
+
 `index-image.csv` csv Header and example record:
 ```
 "MdFileName", "IsDownloaded", "ImageUrl", "ImageName"
@@ -158,6 +175,8 @@ You can probably execute the following command to delete those images.
 
 
 
+#### Comparison of The 3 Markdown Indexes
+
 input `index-markdown.csv` vs `index-markdown-tmp.csv` vs output `index-markdown.csv`
 -   output `index-markdown.csv` = red + green, 
 	see the following figure
@@ -165,6 +184,8 @@ input `index-markdown.csv` vs `index-markdown-tmp.csv` vs output `index-markdown
 ![](./README/index-markdown.png)
 
 
+
+#### Comparison of The 3 Image Indexes
 
 input `index-image.csv` vs `index-image-tmp.csv` vs output `index-image.csv`
 ![](./README/images_in_old_new_md.png)
@@ -176,10 +197,49 @@ input `index-image.csv` vs `index-image-tmp.csv` vs output `index-image.csv`
 
 
 
+#### Image URL Filter
+
+User defines rules to limit which images can be downloaded.
+A filter without any rules allows all images to be downloaded.
+Please see [default rules](./imageUrlFilter.txt).
+
+A rule can be positive or negative.
+Positive rules allow the defined images to be downloaded. 
+For example:
+```
+https://test1.imgur.com/
+https://test2.imgur.com/
+```
+
+Negative rules start with `!` and prevent the defined images from being downloaded. 
+For example:
+```
+!http://localhost/
+!https://test2.imgur.com/10
+!https://test2.imgur.com/Xxx.png
+```
+
+The pattern of a rule can be a regular expression and preceded by `r=`. 
+For example:
+```
+r=https://(test1|test2)\.imgur\.com/.+
+!r=https://test2\.imgur\.com/(10.+|Xxx\.png)
+```
+
+The later rule takes precedence.
+For example, the filter with the following rules forbids images from "https://test1.imgur.com/" to be downloaded.
+```
+https://test1.imgur.com/
+!https://test1.imgur.com/
+```
+
+
+
 ## Features
 
 -   NOT modify the original markdown files
 -   NOT download the same image repeatedly because of the sync mechanism
+-   a user-defined filter for image URL used to download image
 -   support image links such as `![Alt text](https://i.imgur.com/bbb.png "Title Text")`
 -   store images in a directory with the same name as the markdown file linking it
 -   prefix a random integer to image name to keep it unique
@@ -188,7 +248,6 @@ input `index-image.csv` vs `index-image-tmp.csv` vs output `index-image.csv`
 
 ## TODO
 
--   create a user-defined filter for image URL used to download image
 -   use Markdown parser
 -   replace markdown URL in markdown files with local markdown path
 -   support markdown directory traversal
