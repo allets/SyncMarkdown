@@ -112,11 +112,12 @@ class ImageUrlFilter:
 
         isOk = False
         set_by_positive_rule = None
-        for rule in self.rules:
+        for rule in self.rules[::-1]:
             is_match = self.match(url, rule.pattern, rule.is_regexp)
             if is_match:
                 isOk = rule.is_positive
                 set_by_positive_rule = rule.is_positive
+                break
             else:
                 if rule.is_positive:  # not ok: not follow the positive rule
                     if isOk:
@@ -124,7 +125,7 @@ class ImageUrlFilter:
                             isOk = False
                             set_by_positive_rule = rule.is_positive
                         elif set_by_positive_rule:
-                            # The previous rule takes precedence.
+                            # This can not happen.
                             pass
                         else:
                             isOk = False
@@ -135,14 +136,14 @@ class ImageUrlFilter:
                         elif set_by_positive_rule:
                             pass
                         else:
-                            # The previous rule takes precedence.
+                            # This can not happen.
                             pass
                 else:  # ok: follow the negative rule
                     if isOk:
                         if set_by_positive_rule is None:
                             set_by_positive_rule = rule.is_positive
                         elif set_by_positive_rule:
-                            # The previous rule takes precedence.
+                            # This can not happen.
                             pass
                         else:
                             pass
@@ -154,7 +155,7 @@ class ImageUrlFilter:
                             # The previous rule takes precedence.
                             pass
                         else:
-                            # The previous rule takes precedence.
+                            # This can not happen.
                             pass
 
         return isOk
